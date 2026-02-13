@@ -1,0 +1,535 @@
+---
+title: "Dermatology with tidymodels"
+author: YPhillips-Taylor
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "C:/Users/yphillips/OneDrive - morehouse school of medicine/classification-skin-r/data")
+```
+
+```{r}
+library(rpart)
+library(rpart.plot)
+library(ggplot2)
+library(magrittr)
+library(dplyr)
+library(tidyverse)   # includes ggplot2, dplyr, tidyr
+library(ggthemes)    # for clean professional themes
+library(janitor)     # for cleaning column names
+#library(tidymodels)
+library(rsample)
+library(dials)
+
+```
+
+#confirm and if desired set working directory
+```{r}
+#import data https://archive.ics.uci.edu/ml/datasets/Dermatology
+
+data <- read.csv("dermatology.csv") %>% 
+  clean_names() %>%
+   mutate(across(-c(age, class), ~ factor(.x, levels = c(0, 1, 2, 3), ordered = TRUE)), class = as.factor(class)
+)
+
+str(data)
+View(data)
+
+```
+
+```{r}
+vars.to.use <- data[1:34]
+```
+
+#frequency table of Class (target variable)
+```{r}
+#method 1
+table(data$class)
+prop.table(table(data$class))
+
+#method 2
+data %>% 
+  dplyr::count(class) %>% 
+  mutate(perc = n/sum(n)*100)
+```
+
+#summary statistics
+```{r}
+summary(data) 
+```
+
+Step:  Frequency Plot of Class
+```{r}
+data %>%
+  count(class) %>%
+  ggplot(aes(x = class, y = n, fill = class)) +
+  geom_col() +
+  geom_text(aes(label = n), vjust = -0.5) +
+  labs(title = "Frequency of Each Diagnosis Class",
+       x = "Class", y = "Count") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+step: Boxplot of Age by Class
+
+```{r}
+data %>%
+  ggplot(aes(x = class, y = age, fill = class)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Distribution of Age by Diagnosis Class",
+       x = "Class", y = "Age") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+Step: Scalp Condition by Class (Stratified by Itching)
+D
+```{r}
+data %>%
+  ggplot(aes(x = scalp, fill = class)) +
+  geom_bar(position = "fill") +
+  facet_wrap(~ itching, ncol = 4) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Relative Frequency of Scalp Score by Class",
+       subtitle = "Stratified by Itching Score",
+       x = "Scalp Score", y = "Proportion") +
+  theme_bw()
+```
+
+Insights
+Class 1 (light red) dominates across all itching levels and scalp scores. This suggests that Class 1 is the most frequent condition in the dataset, regardless of symptoms.
+
+Greater class diversity appears in itching levels 1–3, especially for scalp scores 0 and 1. This indicates that when patients report higher itching and a low scalp score, they are more likely to belong to classes other than 1.
+
+Itching = 0: Overwhelming dominance of Class 1 regardless of scalp score—little diagnostic variation when patients don't report itching.
+
+Itching = 3: Higher scalp scores (2 or 3) still correspond mostly to Class 1, but scalp score 0 shows increased representation of Classes 3–5, possibly signaling alternative diagnoses when scalp is unaffected despite high itching.
+
+
+```{r}
+set.seed(227)
+wr.tree1 <-rpart(class ~ ., data=data,
+                 method="class",
+                 control=rpart.control(minsplit=20, cp=0.01))
+wr.tree1$cptable
+#In particular, the cp option, set by default equal to 0.01, represent a pre-pruning step because it prevents the generation of non-significant branches (any split that does not decrease the overall lack of fit by a factor of cp is not attempted). See also the meaning of the minsplit, minbucket and maxdepth options.
+print(wr.tree1)
+# obtain the size of the tree by counting the number of nodes which are classified as leaf nodes
+wr.tree1$splits
+sum(wr.tree1$frame$var=="<leaf>")
+```
+```{r}
+# Default plot of the result
+
+print(wr.tree1)
+# Visualize the decision tree with rpart.plot
+
+rpart.plot(
+  wr.tree1,
+  type = 2,                      # Label all splits (not just leaf nodes)
+  extra = 104,                  # Show probability of each class + predicted class
+  box.palette = "RdYlGn",       # Valid diverging color palette
+  shadow.col = "gray",          # Add shadow for better visual distinction
+  fallen.leaves = TRUE,         # Align leaf nodes at the bottom
+  main = "Dermatology Decision Tree",  # Chart title
+  cex = 0.7                     # Optional: scale text to fit better
+)
+
+```
+
+fallen.leaves = FALSE: allows leaves to be staggered vertically rather than forced into one line.
+compress = FALSE: disables horizontal compression, spacing nodes more evenly.
+cex = 0.7: scales down text size to avoid label collision.
+faclen = 0: ensures full factor labels are shown (optional, but can help readability).
+
+```{r}
+rpart.plot(x = wr.tree1, type=1, extra=4)
+rpart.plot(x = wr.tree1, type=0, extra=0) #super simplified version
+#see help for options
+```
+
+
+```{r}
+# Split into training and testing
+set.seed(222)
+ind<- sample(nrow(data), 0.7 * nrow(data))
+train <- data[ind, ]
+test <- data[-ind, ]
+```
+
+
+#FROM HERE CHANGE THE DATASETS TO TRAIN AND TEST#
+```{r}
+#creates the decision tree
+#class is the classifier.
+wr.tree1 <-rpart(class~., data=train, method="class", cp = .01)
+#cp=-1 makes sure tree is fully grown
+
+# Plot
+```
+
+
+```{r}
+# Step 2: Plot the full tree (fixes included)
+rpart.plot(
+  wr.tree1,                     # Must use the model object, not the data
+  type = 2,                     # Internal node labels
+  extra = 104,                  # Class probabilities + majority class
+  box.palette = "RdYlGn",       # Valid palette (fix from RdYlBu)
+  shadow.col = "gray", 
+  fallen.leaves = FALSE,        # Prevent bottom row overlap
+  compress = FALSE,             # Avoid crowding
+  cex = 0.7,                    # Shrink text for clarity
+  main = "Full Classification Tree"
+)
+
+# Step 3: Optionally print rules in text format
+rpart.plot(wr.tree1, extra = 103)
+print(wr.tree1)
+
+# Step 4: View complexity parameter table
+wr.tree1$cptable
+
+# Step 5: Select best cp (pruning)
+best_cp <- wr.tree1$cptable[which.min(wr.tree1$cptable[,"xerror"]), "CP"]
+
+# Step 6: Prune the tree
+wr.tree1_pruned <- prune(wr.tree1, cp = best_cp)
+
+# Step 7: Plot pruned tree
+rpart.plot(
+  wr.tree1_pruned,
+  type = 2,
+  extra = 104,
+  box.palette = "RdYlGn",
+  shadow.col = "gray",
+  fallen.leaves = FALSE,
+  compress = FALSE,
+  cex = 0.7,
+  main = "Pruned Classification Tree"
+)
+```
+
+
+extra=104 class model with a response having more than two levels
+#By default, rpart() function uses the Gini impurity measure to split the note. 
+#The higher the Gini coefficient, the more different instances within the node
+
+```{r}
+# From the rpart documentation, "An overall measure of variable importance is the sum of the goodness of split measures for each split for which it was the primary variable."
+wr.tree1$variable.importance
+
+```
+
+#rel error of each iteration of the tree is the fraction of mislabeled elements in the root.
+```{r}
+wr.tree1$cptable
+cptable = data.frame(wr.tree1$cptable)
+#select the tree with the lowest cross-validation error and to find the corresponding value of CP and number of splits:
+min(cptable$xerror)
+
+which.min(cptable$xerror)
+#we have that the best tree has 5 splits before the post-pruning. 
+
+cptable$nsplit[which.min(cptable$xerror)]
+
+#The cross validation error rates and standard deviations are displayed in the columns 
+#xerror and xstd respectively.
+
+oneSElimit = min(cptable$xerror) + cptable$xstd[which.min(cptable$xerror)]
+oneSElimit
+
+#check which is the smallest tree whose as a rule of thumb, it's best to prune a decision tree using the cp of smallest tree that is within one standard deviation of the tree with the smallest xerror. xerror value is lower than the oneSElimit value:
+  
+# all the trees with an error below the limit
+which(cptable$xerror<oneSElimit)
+
+# take the smallest one
+best = min(which(cptable$xerror<oneSElimit))
+best
+## [1] 5
+bestcp = cptable$CP[best]
+bestcp 
+
+```
+
+```{r}
+#We can now prune the tree with the selected value of ??, (CP) by using the prune function:
+wr.tree1_p = prune(tree = wr.tree1, cp = bestcp)
+
+#plot the pruned tree:
+rpart.plot(x = wr.tree1_p) 
+print(wr.tree1_p)
+
+```
+
+```{r}
+#Predict the outcome and the possible outcome probabilities
+test$treeClass <- predict(wr.tree1_p, newdata = test, type = "class")
+test$treeProb <- predict(wr.tree1_p, newdata = test, type = "prob")
+test
+
+predict_unseen <-predict(wr.tree1_p, newdata = test, type = 'class')
+table_mat <- table(test$class, predict_unseen)
+table_mat
+
+accuracy_Test <- sum(diag(table_mat)) / sum(table_mat)
+
+print(paste('Accuracy for test', accuracy_Test))
+```
+
+```{r}
+accuracy_tune <- function(wr.tree1) {
+  predict_unseen <- predict(wr.tree1, test, type = 'class')
+  
+table_mat <- table(test$class, predict_unseen)
+accuracy_Test <- sum(diag(table_mat)) / sum(table_mat)
+accuracy_Test
+}
+```
+
+```{r}
+class_tree_pred_prob = predict(wr.tree1_p,newdata=test, type = "prob")
+
+#confirmation
+control <- rpart.control(maxdepth = 5, 
+                         cp = 0.001)
+
+tune_fit <- rpart(class~., data = test, method = 'class', control = control)
+
+accuracy_tune(tune_fit)
+print(tune_fit)
+```
+
+#randomForest
+```{r}
+library(randomForest)
+library(dplyr)
+```
+
+#change class to factor level - MUST factor target variable for RF
+
+#RandomForest(formula, ntree=n, mtry=FALSE, maxnodes = NULL)
+#Arguments:
+# - Formula: Formula of the fitted model
+#- ntree: number of trees in the forest
+#- mtry: Number of candidates draw to feed the algorithm. By default, it is the square of the number of columns.
+#- maxnodes: Set the maximum amount of terminal nodes in the forest
+#- importance=TRUE: Whether independent variables importance in the random forest be assessed
+#Bagging corresponds to a particular case of random forest when all the regressors are used. For this reason to implement bagging we use the function randomForest in the randomForest package. As the procedure is based on boostrap resampling we need to set the seed. As usual we specify the formula and the data together with the number of regressors to be used (mtry, in this case equal to the number of columns minus the column dedicated to the response variable). The option importance is set to T when we are interested in assessing the importance of the predictors. Finally, ntree represents the number of independent trees to grow (500 is the default value).
+
+#Bagging: all regressors are used. For this reason to implement bagging we use the function randomForest in the randomForest package. difference is in mtry, in RF=mtry = sqrt(ncol(train)-1)
+
+```{r}
+data$class <- factor(data$class)
+set.seed(1, sample.kind="Rejection")
+class_bag = randomForest(formula = class~ ., data = train,
+                         
+   #mtry = ncol(train)-1, 
+   importance = T, #to estimate predictors importance
+    ntree = 500) #500 by default
+#mtry = sqrt(ncol(class)-1): used for random forest not bagging
+class_bag
+
+varImpPlot(class_bag)
+```
+
+#left plot the mean decrease (across all B trees) of accuracy in prediction on the OOB samples when a given variable is excluded. This measures how much accuracy the model losses by excluding each variable.
+
+#right plot the mean decrease (across all B trees) in node purity on the OOB samples when a given variable is excluded. For classification, the node impurity is measured by the Gini index. This measures how much each variable contributes to the homogeneity of the nodes in the resulting random forest.
+
+```{r}
+class_bag_pred = predict(class_bag,
+                 newdata=test,
+                 type="class")                             
+head(class_bag_pred)
+
+accbag = mean((test$class == class_bag_pred)) 
+head(accbag)
+
+accuracy_tune(class_bag)
+```
+#bagging performs slightly better with respect to the single prune tree.
+
+```{r}
+#compute the predicted probabilities:
+class_bag_pred_prob = predict(class_bag,
+                    newdata=test,
+                    type = "prob")
+
+test$bagClass2 <- predict(class_bag, newdata = test, type = "class")
+test$bagProb2 <- predict(class_bag, newdata = test, type = "prob")
+test
+```
+## Classification with tidymodels + Random Forest
+
+```{r}
+library(themis)
+# Recipe + workflow
+rf_recipe <- recipe(class ~ ., data = train) %>%
+  step_zv(all_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_smote(class)
+```
+step_zv(all_predictors()): Removes predictors with zero variance.
+
+step_smote(class): Uses SMOTE to oversample the minority class. This is especially useful if the class variable is imbalanced (which it is in the dermatology dataset).
+
+You are ensuring that the model is trained on balanced data, helping improve classification performance for minority classes.
+
+Model Specification and Workflow
+```{r}
+library(parsnip)
+library(workflows)
+rf_spec <- rand_forest(trees = 500, mtry = tune()) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+rf_workflow <- workflow() %>%
+  add_model(rf_spec) %>%
+  add_recipe(rf_recipe)
+```
+
+tune mtry, the number of predictor variables randomly selected at each split in a decision tree.Instead of evaluating all predictors at each split, the random forest randomly samples mtry variables and finds the best split among them.This randomness increases model diversity and reduces overfitting. which is the number of predictors sampled at each split.
+
+importance = "impurity" allows variable importance to be computed using Gini impurity decrease.
+
+# Cross-validation
+```{r}
+set.seed(123)
+kfold <- vfold_cv(train, v = 5, strata = class)
+```
+
+v = 5 means the training data is divided into 5 equal parts (folds). In each iteration, 4 folds are used to train the model and 1 fold is used to validate.
+
+strata = class ensures class proportions are preserved in each fold. This is especially important in classification problems with class imbalance, like the dermatology dataset.
+
+# Hyperparameter Tuning
+```{r}
+
+rf_grid <- grid_regular(mtry(range = c(2, 10)), levels = 5)
+```
+
+This creates a regular grid of 5 equally spaced values of mtry between 2 and 10.
+This controls model complexity and diversity:
+Lower mtry → more randomness → lower correlation among trees → potentially better generalization.
+Higher mtry → stronger trees individually, but more correlated → risk of overfitting.
+
+```{r}
+library(tune)
+library(yardstick)
+rf_tuned <- tune_grid(
+  rf_workflow,
+  resamples = kfold,
+  grid = rf_grid,
+  metrics = metric_set(accuracy)
+)
+
+# Select best model
+best_rf <- select_best(rf_tuned, metric = "accuracy")
+final_rf <- finalize_workflow(rf_workflow, best_rf)
+
+# Fit final model
+rf_fit <- fit(final_rf, data = train)
+```
+
+select_best() picks the mtry value with the highest mean accuracy across folds.
+
+This step ensures that you choose the most predictive level of model complexity for your data, avoiding both underfitting and overfitting.
+
+# Evaluates test set accuracy of the best-tuned model.
+```{r}
+rf_predictions <- predict(rf_fit, test) %>%
+  bind_cols(truth = test$class)
+
+metrics(rf_predictions, truth = truth, estimate = .pred_class)
+```
+
+Accuracy	Proportion of correctly predicted instances over total observations. Accuracy is intuitive but can be misleading in imbalanced datasets.
+
+Kappa	Cohen’s Kappa: adjusts accuracy for agreement that may happen by chance (values: -1 to 1). Kappa adjusts for random agreement—great for multiclass or imbalanced situations.
+Scale:
+
+< 0.4 = poor
+0.4–0.6 = moderate
+0.6–0.8 = substantial
+0.8 = 	Values >0.8 generally indicate strong performance
+
+High classification of test instances are likely due to SMOTE and hyperparameter tuning.
+
+# Teaching Tips for Faculty:
+- Ask students: What if one class is dominant? Would accuracy still be reliable?
+- Use Kappa to introduce the concept of chance agreement and balanced performance.
+
+
+```{r}
+# Plot variable importance using vip for the final random forest model
+# Only show the top 10 most important features
+library(vip)
+rf_fit %>%
+  extract_fit_parsnip() %>%
+  vip(num_features = 10) + 
+  ggtitle("Top 10 Important Features - Random Forest") +
+  theme(axis.text.y = element_text(size = 10))
+```
+
+Produces a bar plot showing the top 10 most important predictors based on how much they improve splits in the trees.
+Variables at the top of this plot are the most influential in determining the class label. You can use this for:
+
+```{r}
+library(yardstick)
+rf_predictions %>%
+  conf_mat(truth = truth, estimate = .pred_class) %>%
+  autoplot(type = "heatmap")
+```
+
+
+```{r}
+results_df <- data.frame(
+  Model = c("Decision Tree", "Random Forest", "Tuned RF"),
+  Accuracy = c(0.91, 0.95, 0.962),
+  Kappa = c(0.88, 0.94, 0.953)
+)
+
+ggplot(results_df, aes(x = Model)) +
+  geom_bar(aes(y = Accuracy, fill = "Accuracy"), stat = "identity", position = "dodge") +
+  geom_bar(aes(y = Kappa, fill = "Kappa"), stat = "identity", position = "dodge") +
+  labs(title = "Model Comparison: Accuracy vs Kappa",
+       y = "Score",
+       fill = "Metric") +
+  scale_fill_manual(values = c("Accuracy" = "skyblue", "Kappa" = "orange")) +
+  theme_minimal()
+```
+
+
+Feature discussions include:
+Domain exploration (e.g., “why is scaling or itching more predictive?”)
+Teaching how to interpret machine learning models
+
+| Feature                         | Teaching Insight                                                          |
+| ------------------------------- | 
+| `rpart.plot()`                  | Visualizes tree splits, helping students see “rules” learned by the model |
+| `randomForest` + `varImpPlot()` | Compares traditional ML vs. modern pipelines                              |
+| `tidymodels::workflow()`        | Encourages modular, readable ML code                                      |
+| `step_smote()`                  | Teaches students how to handle class imbalance                            |
+| `vip()`                         | Visual explanation of feature importance in ensemble models               |
+| `tune_grid()`                   | Demonstrates **model tuning** and **cross-validation**                    |
+| `finalize_workflow()`           | Shows how to deploy the best-tuned model                                  |
+
+
+## Notes
+
+- Use the **Decision Tree** section to walk through intuitive model splits.
+- Use the **Random Forest (tidymodels)** approach for more rigorous, reproducible ML workflows.
+- Introduce model tuning (`tune_grid`, `select_best`) as a bridge to advanced modeling.
+- Emphasize `vip()` to discuss model interpretability and feature relevance.
+
+
+
+
+
+
+
